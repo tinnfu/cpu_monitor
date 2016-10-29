@@ -4,7 +4,8 @@ import time
 import os
 import threading
 import sys
-from Tkinter import *
+import signal
+from Tkinter import * 
 
 # get HZ from /usr/include/asm-generic/param.h
 HZ = 100
@@ -14,17 +15,19 @@ PID_LEN = 8
 CPU_LEN = 8
 CMD_LEN = 24
 
+g_stop = False
+
 def prefix_pad(limit, msg):
     msg = '%s' % msg
     if len(msg) >= limit:
         return msg[:limit]
-    return (limit- len(msg)) * '. ' + msg
+    return (limit - len(msg)) * '. ' + msg
 
 def suffix_pad(limit, msg):
     msg = '%s' % msg
     if len(msg) > limit:
         return msg[:limit]
-    return msg + (limit - len(msg)) * ' '
+    return msg + (limit - len(msg)) * '. '
 
 class killer_ui(object):
     __killer__ = None
@@ -52,6 +55,7 @@ class killer_ui(object):
         self.root = Tk()
         self.root.title('cpu_monitor')
         self.root.tk_setPalette(background='black')
+        self.root.after(100, self.feed)
         #self.root.geometry('500x250')
 
         # 1. title
@@ -171,29 +175,37 @@ class killer_ui(object):
         self.cpu_usage_lock.release()
 
     def feed(self):
-        while 1:
-            self.cpu_usage_lock.acquire()
-            if self.is_select:
-                self.cpu_usage_lock.release()
-                print 'give up ...'
-                return
-            else:
-                break
+        if g_stop:
+            killer_ui.stop_killer()
+            return
+
+        self.cpu_usage_lock.acquire()
+        if self.is_select:
+            self.cpu_usage_lock.release()
+            self.root.after(1000, self.feed)
+            return
 
         if len(self.cpu_usage_buffer) > 0:
             self.cpu_usage = self.cpu_usage_buffer
             show_info = self.gen_show_info(self.cpu_usage)
             self.list_var.set(show_info)
             self.count_var.set('count: %s' % len(self.cpu_usage))
-            self.cpu_usage_buffer = None
+            self.cpu_usage_buffer = []
 
         self.cpu_usage_lock.release()
+        self.root.after(500, self.feed)
 
     def run(self):
         self.root.mainloop()
 
     def async_feed(self, cpu_usage):
+        while not self.cpu_usage_lock.acquire(True):
+            if g_stop:
+                return
+            time.sleep(0.1)
+
         self.cpu_usage_buffer = cpu_usage
+        self.cpu_usage_lock.release()
 
 def get_running_pid():
     ''''''
@@ -334,42 +346,42 @@ def alert(cpu_usage):
     if killer:
         killer.async_feed(cpu_usage)
     else:
-        print 'haha ...'
-        #report_file = '/tmp/cpu_monitor'
+        report_file = '/tmp/cpu_monitor'
 
-        #with open(report_file, 'a+') as f:
-        #    for pid, usage, cmd in cpu_usage:
-        #        f.write('%s: %.2f, %s\n' % (pid, usage, cmd))
+        with open(report_file, 'a+') as f:
+            for pid, usage, cmd in cpu_usage:
+                f.write('%s: %s, %s\n' % (pid, usage, cmd))
 
-    #os.system('sudo /sbin/shutdown -k now')
+        os.system('sudo /sbin/shutdown -k now')
+
+def sig_handler(sig, stack):
+    global g_stop
+    g_stop = True
 
 def monitor_cpu(limit = 80):
     killer_thread = threading.Thread(target = killer_ui.init_killer)
     killer_thread.start()
 
+    signal.signal(signal.SIGINT, sig_handler)
+    signal.signal(signal.SIGTERM, sig_handler)
+
     delay = 10 # s
-    while 1:
-        has_alert = True
-        try:
-            pids = get_running_pid()
+    while not g_stop:
+        has_alert = False
+        pids = get_running_pid()
 
-            cpu_usage = get_cpu_usage(pids)
+        cpu_usage = get_cpu_usage(pids)
 
-            cpu_usage = [(int(pid), '%.2f' % usage, get_cmd_with_pid(pid))\
-                         for pid, usage in cpu_usage]# if usage > limit]
-            if cpu_usage != []:
-               alert(cpu_usage)
-               has_alert = True
-        except Exception, ex:
-            print ex
-        finally:
-            time.sleep(delay if not has_alert else 1)
+        cpu_usage = [(int(pid), '%.2f' % usage, get_cmd_with_pid(pid))\
+                     for pid, usage in cpu_usage]# if usage > limit]
+        if cpu_usage != []:
+            alert(cpu_usage)
+            has_alert = True
+        time.sleep(delay if not has_alert else 1)
 
-    killer_thread.join(0.5)
+    killer_thread.join()
 
 def main():
-    monitor_cpu(limit = 60)
-    return
     pid = os.fork()
     if pid == 0:
         monitor_cpu(limit = 60)
