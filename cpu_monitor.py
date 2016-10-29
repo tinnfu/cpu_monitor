@@ -9,13 +9,49 @@ from Tkinter import *
 # get HZ from /usr/include/asm-generic/param.h
 HZ = 100
 
+ID_LEN = 4
+PID_LEN = 8
+CPU_LEN = 8
+CMD_LEN = 24
+
+def prefix_pad(limit, msg):
+    msg = '%s' % msg
+    if len(msg) >= limit:
+        return msg[:limit]
+    return (limit- len(msg)) * '. ' + msg
+
+def suffix_pad(limit, msg):
+    msg = '%s' % msg
+    if len(msg) > limit:
+        return msg[:limit]
+    return msg + (limit - len(msg)) * ' '
+
 class killer_ui(object):
+    __killer__ = None
+
+    @staticmethod
+    def get_killer():
+        return killer_ui.__killer__
+
+    @staticmethod
+    def init_killer():
+        killer_ui.__killer__ = killer_ui()
+        killer_ui.__killer__.run()
+
+    @staticmethod
+    def stop_killer():
+        killer_ui.__killer__.root.destroy()
+        killer_ui.__killer__ = None
+
     def __init__(self):
-        self.cpu_usage_lock = False
+        self.is_select = False
+        self.cpu_usage_lock = threading.Lock()
         self.cpu_usage = []
+        self.cpu_usage_buffer = []
 
         self.root = Tk()
         self.root.title('cpu_monitor')
+        self.root.tk_setPalette(background='black')
         #self.root.geometry('500x250')
 
         # 1. title
@@ -23,13 +59,20 @@ class killer_ui(object):
     
         # 2. proccess list
         list_frame = Frame(self.root)
-        list_frame.pack(side = TOP, pady = 10)
+        list_frame.pack(side = TOP, pady = 10, expand = True, fill=BOTH)
+
+        # 2.1 list title
+        title_info = '%s|%s|%s|%s' % (prefix_pad(ID_LEN, 'ID'), prefix_pad(PID_LEN, 'PID'),
+                      prefix_pad(CPU_LEN, '%CPU'), prefix_pad(CMD_LEN, 'CMD  '))
+        Label(list_frame, text = title_info, bg = '#3D3D3D', font = ('', 10)).pack(side = TOP)
     
         # 2.1 list box
         self.list_var = StringVar()
         # BROWSE | MULTIPLE
-        self.list_box = Listbox(list_frame, selectmode = EXTENDED, listvariable = self.list_var)
-        self.list_box.pack(side = LEFT)
+        self.list_box = Listbox(list_frame, selectmode = EXTENDED, listvariable = self.list_var,
+                                width = 32, height = 10, font=('', 10),
+                                selectbackground = 'white', selectforeground = 'black')
+        self.list_box.pack(side = LEFT, expand = True, fill=BOTH)
     
         # 2.2. scroll bar
         scroll_bar = Scrollbar(list_frame)
@@ -43,23 +86,35 @@ class killer_ui(object):
     
         self.count_var  = StringVar()
         self.count_var.set('count: %s' % self.list_box.size())
-        self.count_label = Label(label_frame, bg='red', textvariable = self.count_var, width = 20, height = 2)
+        self.count_label = Label(label_frame, bg = 'red', textvariable = self.count_var, width = 20, height = 2)
         self.count_label.pack(side = LEFT)
     
-        select_var = StringVar()
-        select_var.set('select: 0')
-        select_label = Label(label_frame, bg='green', textvariable = select_var, width = 20, height = 2)
+        self.select_var = StringVar()
+        self.select_var.set('select_cnt: 0')
+        select_label = Label(label_frame, bg='green', textvariable = self.select_var, width = 20, height = 2)
         select_label.pack(side = RIGHT)
     
         def update_selections(event):
-            select_var.set('select: %s' % len(self.list_box.curselection()))
+            self.cpu_usage_lock.acquire()
+            cnt = len(self.list_box.curselection())
+            self.select_var.set('select_cnt: %s' % cnt)
+            self.is_select = (cnt > 0)
+            self.cpu_usage_lock.release()
         self.list_box.bind('<ButtonRelease-1>', update_selections)
+
+        def clear_selections(event):
+            self.list_box.select_clear(0, self.list_box.size())
+            self.select_var.set('select_cnt: 0')
+            self.cpu_usage_lock.acquire()
+            self.is_select = False
+            self.cpu_usage_lock.release()
+        self.list_box.bind('<ButtonRelease-3>', clear_selections)
         
         # 4. button
         button_frame = Frame(self.root)
         button_frame.pack(side = TOP, pady = 5)
     
-        exit_button = Button(button_frame, text = 'exit', command = self.root.quit)
+        exit_button = Button(button_frame, text = 'exit', command = killer_ui.stop_killer)
         exit_button.pack(side = LEFT, padx = 20)
     
         kill_all_proc = lambda: self._kill_proc([index for index in range(len(self.cpu_usage))])
@@ -69,12 +124,28 @@ class killer_ui(object):
         kill_proc = lambda: self._kill_proc(self.list_box.curselection())
         kill_button = Button(button_frame, text = 'kill', command = kill_proc)
         kill_button.pack(side = RIGHT, padx = 20)
-    
-    def _kill_proc(self, selections, sig = 9):
-        while self.cpu_usage_lock:
-            time.sleep(0.5)
 
-        self.cpu_usage_lock = True
+    def gen_show_info(self, cpu_usage = None):
+        if cpu_usage == None:
+            cpu_usage = self.cpu_usage
+
+        cnt = 0
+        show_info = ()
+        for pid, usage, cmd in cpu_usage:
+            cnt += 1
+            show_info += ('%s|%s|%s|%s' % (prefix_pad(ID_LEN, cnt), prefix_pad(PID_LEN, pid),
+                          prefix_pad(CPU_LEN, '%s%%' % usage), cmd),)
+
+        return show_info
+
+    def _kill_proc(self, selections, sig = 9):
+        if len(selections) == 0:
+            return
+
+        self.cpu_usage_lock.acquire()
+        if not self.is_select:
+            self.cpu_usage_lock.release()
+            return
 
         fail_index = []
         for index in selections:
@@ -83,41 +154,47 @@ class killer_ui(object):
             except OSError, ex:
                 # No such process
                 if ex.errno != 3:
-                    raise Exception('fail to kill pid: %s' % self.cpu_usage[index][0])
+                    raise ex
             except Exception, ex:
                 fail_index.append(index)
 
+        cpu_usage_cp = self.cpu_usage[:]
         for index in selections:
             if index not in fail_index:
-                self.cpu_usage.remove(self.cpu_usage[index])
+                self.cpu_usage.remove(cpu_usage_cp[index])
 
-        self.cpu_usage_lock = False
+        self.list_var.set(self.gen_show_info())
+        self.count_var.set('count: %s' % len(self.cpu_usage))
 
-        self.feed(self.cpu_usage)
+        self.is_select = False
+        self.select_var.set('select_count: 0')
+        self.cpu_usage_lock.release()
 
-    def feed(self, cpu_usage):
-        show_info = []
-        cnt = 0
-        for pid, usage, cmd in cpu_usage:
-            cnt += 1
-            show_info.append('%4s:%6s:%6s%%:%s' % (cnt, pid, usage, cmd))
+    def feed(self):
+        while 1:
+            self.cpu_usage_lock.acquire()
+            if self.is_select:
+                self.cpu_usage_lock.release()
+                print 'give up ...'
+                return
+            else:
+                break
 
-        while self.cpu_usage_lock:
-            time.sleep(0.5)
+        if len(self.cpu_usage_buffer) > 0:
+            self.cpu_usage = self.cpu_usage_buffer
+            show_info = self.gen_show_info(self.cpu_usage)
+            self.list_var.set(show_info)
+            self.count_var.set('count: %s' % len(self.cpu_usage))
+            self.cpu_usage_buffer = None
 
-        self.cpu_usage_lock = True
-        self.list_var.set(show_info[0])
-        self.count_var.set(cnt)
-        self.cpu_usage = cpu_usage
-        self.cpu_usage_lock = False 
+        self.cpu_usage_lock.release()
 
     def run(self):
-        def deal_feed(event):
-            print event
-            self.feed([])
-        self.root.bind('feed', deal_feed)
         self.root.mainloop()
-    
+
+    def async_feed(self, cpu_usage):
+        self.cpu_usage_buffer = cpu_usage
+
 def get_running_pid():
     ''''''
 
@@ -243,52 +320,48 @@ def get_cmd_with_pid(pid):
     try:
         with open(cmd_file, 'r') as f:
             cmd = f.read()
+        if cmd.endswith('\x00'):
+            cmd = cmd[:-1]
     except IOError, ex:
         cmd = '[dead proccess]'
 
     return cmd
 
-def alert(killer, cpu_usage):
+def alert(cpu_usage):
     ''''''
-    print cpu_usage
-    killer.feed(cpu_usage)
-    return
 
-    report_file = '/tmp/cpu_monitor'
+    killer = killer_ui.get_killer()
+    if killer:
+        killer.async_feed(cpu_usage)
+    else:
+        print 'haha ...'
+        #report_file = '/tmp/cpu_monitor'
 
-    with open(report_file, 'a+') as f:
-        for pid, usage, cmd in cpu_usage:
-            f.write('%s: %.2f, %s\n' % (pid, usage, cmd))
+        #with open(report_file, 'a+') as f:
+        #    for pid, usage, cmd in cpu_usage:
+        #        f.write('%s: %.2f, %s\n' % (pid, usage, cmd))
 
     #os.system('sudo /sbin/shutdown -k now')
 
-killer = None
-def killer_ui_start():
-    global killer
-    killer = killer_ui()
-    killer.run()
-
 def monitor_cpu(limit = 80):
-    killer_thread = threading.Thread(target = killer_ui_start)
+    killer_thread = threading.Thread(target = killer_ui.init_killer)
     killer_thread.start()
 
-    print 'all in'
     delay = 10 # s
     while 1:
-        has_alert = False
+        has_alert = True
         try:
             pids = get_running_pid()
 
             cpu_usage = get_cpu_usage(pids)
 
-            cpu_usage = [(pid, '%.2f' % usage, get_cmd_with_pid(pid))\
-                         for pid, usage in cpu_usage if usage > limit]
+            cpu_usage = [(int(pid), '%.2f' % usage, get_cmd_with_pid(pid))\
+                         for pid, usage in cpu_usage]# if usage > limit]
             if cpu_usage != []:
-               global killer
-               alert(killer, cpu_usage)
+               alert(cpu_usage)
                has_alert = True
-        except:
-            pass
+        except Exception, ex:
+            print ex
         finally:
             time.sleep(delay if not has_alert else 1)
 
