@@ -450,8 +450,6 @@ def monitor_cpu(limit = 80):
     killer_thread.join()
 
 def main():
-    monitor_cpu(limit = 0)
-    return
     pid = os.fork()
     if pid == 0:
         monitor_cpu(limit = 60)
