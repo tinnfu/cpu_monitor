@@ -85,12 +85,32 @@ class killer_ui(object):
         y_scroll_bar.pack(side = RIGHT, fill = Y)
         self.list_box.configure(yscrollcommand = y_scroll_bar.set)
         y_scroll_bar['command'] = self.list_box.yview
+
+        def goto_top(event):
+            self.list_box.activate(0)
+            self.list_box.select_clear(0, END)
+            self.list_box.select_set(0)
+            self.list_box.yview_moveto(0.0)
+        def goto_bottom(event):
+            self.list_box.select_clear(0, END)
+            self.list_box.activate(END)
+            self.list_box.select_set(END)
+            self.list_box.yview_moveto(1.0)
+        self.list_box.bind('<Double-KeyPress-g>', goto_top)
+        self.list_box.bind('<KeyPress-G>', goto_bottom)
     
         # 2.4. width scroll bar
         x_scroll_bar = Scrollbar(self.root, orient = HORIZONTAL)
         x_scroll_bar.pack(side = TOP, fill = X)
         self.list_box.configure(xscrollcommand = x_scroll_bar.set)
         x_scroll_bar['command'] = self.list_box.xview
+
+        def map_h_left(event):
+            x_scroll_bar.event_generate('<KeyPress-Left>')
+        def map_l_right(event):
+            x_scroll_bar.event_generate('<KeyPress-Right>')
+        self.list_box.bind('<KeyPress-h>', map_h_left)
+        self.list_box.bind('<KeyPress-l>', map_l_right)
 
         # 3. count label and select label
         label_frame = Frame(self.root)
@@ -113,15 +133,35 @@ class killer_ui(object):
             self.is_select = (cnt > 0)
             self.cpu_usage_lock.release()
         self.list_box.bind('<ButtonRelease-1>', update_selections)
+        self.list_box.bind('<KeyRelease-Up>', update_selections)
+        self.list_box.bind('<KeyRelease-Down>', update_selections)
+
+        def map_j_Down(event):
+            self.list_box.event_generate('<KeyPress-Down>')
+            update_selections(event)
+        def map_shift_j_Down(event):
+            self.list_box.event_generate('<Shift-KeyPress-Down>')
+            update_selections(event)
+        def map_k_Up(event):
+            self.list_box.event_generate('<KeyPress-Up>')
+            update_selections(event)
+        def map_shift_k_Up(event):
+            self.list_box.event_generate('<Shift-KeyPress-Up>')
+            update_selections(event)
+        self.list_box.bind('<KeyPress-j>', map_j_Down)
+        self.list_box.bind('<KeyPress-J>', map_shift_j_Down)
+        self.list_box.bind('<KeyPress-k>', map_k_Up)
+        self.list_box.bind('<KeyPress-K>', map_shift_k_Up)
 
         def clear_selections(event):
+            self.cpu_usage_lock.acquire()
             self.list_box.select_clear(0, self.list_box.size())
             self.select_var.set('select_cnt: 0')
-            self.cpu_usage_lock.acquire()
             self.is_select = False
             self.cpu_usage_lock.release()
         self.list_box.bind('<ButtonRelease-3>', clear_selections)
         self.list_box.bind('<Double-1>', clear_selections)
+        self.list_box.bind('<Escape>', clear_selections)
         
         # 4. button
         button_frame = Frame(self.root)
@@ -129,16 +169,19 @@ class killer_ui(object):
     
         exit_button = Button(button_frame, text = 'exit', command = self.hide)
         exit_button.pack(side = LEFT, padx = 20)
+        exit_button.bind('<Return>', lambda event: self.hide())
     
-        kill_all_button = Button(button_frame, text = 'killall',
+        killall_button = Button(button_frame, text = 'killall',
                 command = lambda: self.kill_proc(range(len(self.cpu_usage))))
-        kill_all_button.pack(side = LEFT, padx = 20)
+        killall_button.pack(side = LEFT, padx = 20)
+        killall_button.bind('<Return>', lambda event: self.kill_proc(range(len(self.cpu_usage))))
     
         kill_button = Button(button_frame, text = 'kill',
                 command = lambda: self.kill_proc(self.list_box.curselection()))
         kill_button.pack(side = RIGHT, padx = 20)
+        kill_button.bind('<Return>', lambda event: self.kill_proc(self.list_box.curselection()))
 
-        # 5. bind key
+        # 5. bind short-key
         self.root.bind('<Control-KeyPress-x>',
                        lambda event: self.kill_proc(self.list_box.curselection()))
         self.root.bind('<Control-KeyPress-X>',
@@ -407,6 +450,8 @@ def monitor_cpu(limit = 80):
     killer_thread.join()
 
 def main():
+    monitor_cpu(limit = 0)
+    return
     pid = os.fork()
     if pid == 0:
         monitor_cpu(limit = 60)
