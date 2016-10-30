@@ -37,8 +37,8 @@ class killer_ui(object):
         return killer_ui.__killer__
 
     @staticmethod
-    def init_killer():
-        killer_ui.__killer__ = killer_ui()
+    def init_killer(limit):
+        killer_ui.__killer__ = killer_ui(limit)
         killer_ui.__killer__.run()
 
     @staticmethod
@@ -46,7 +46,7 @@ class killer_ui(object):
         killer_ui.__killer__.root.destroy()
         killer_ui.__killer__ = None
 
-    def __init__(self):
+    def __init__(self, limit):
         self.is_select = False
         self.cpu_usage_lock = threading.Lock()
         self.cpu_usage = []
@@ -61,7 +61,7 @@ class killer_ui(object):
         self.root.protocol('WM_DELETE_WINDOW', lambda *ev: self.hide())
 
         # 1. title
-        Label(self.root, text = 'proccess cpu_usage > 80%').pack(side = TOP, pady = 10)
+        Label(self.root, text = 'proccess cpu_usage > %s%%' % limit).pack(side = TOP, pady = 10)
     
         # 2. proccess list
         list_frame = Frame(self.root)
@@ -383,7 +383,8 @@ def sig_handler(sig, stack):
     g_stop = True
 
 def monitor_cpu(limit = 80):
-    killer_thread = threading.Thread(target = killer_ui.init_killer)
+    killer_thread = threading.Thread(target = killer_ui.init_killer,
+                                     args = (limit,))
     killer_thread.start()
 
     signal.signal(signal.SIGINT, sig_handler)
