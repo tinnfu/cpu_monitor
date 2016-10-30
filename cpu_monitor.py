@@ -53,37 +53,45 @@ class killer_ui(object):
         self.cpu_usage_buffer = []
 
         self.root = Tk()
+        self.root.resizable(False, False)
         self.root.title('cpu_monitor')
         self.root.tk_setPalette(background='black')
         self.root.after(100, self.feed)
         #self.root.geometry('500x250')
+        self.root.protocol('WM_DELETE_WINDOW', lambda *ev: self.hide())
 
         # 1. title
         Label(self.root, text = 'proccess cpu_usage > 80%').pack(side = TOP, pady = 10)
     
         # 2. proccess list
         list_frame = Frame(self.root)
-        list_frame.pack(side = TOP, pady = 10, expand = True, fill=BOTH)
+        list_frame.pack(side = TOP, expand = True, fill=BOTH)
 
         # 2.1 list title
         title_info = '%s|%s|%s|%s' % (prefix_pad(ID_LEN, 'ID'), prefix_pad(PID_LEN, 'PID'),
                       prefix_pad(CPU_LEN, '%CPU'), prefix_pad(CMD_LEN, 'CMD  '))
         Label(list_frame, text = title_info, bg = '#3D3D3D', font = ('', 10)).pack(side = TOP)
-    
-        # 2.1 list box
+
+        # 2.2 list box
         self.list_var = StringVar()
         # BROWSE | MULTIPLE
         self.list_box = Listbox(list_frame, selectmode = EXTENDED, listvariable = self.list_var,
                                 width = 32, height = 10, font=('', 10),
                                 selectbackground = 'white', selectforeground = 'black')
         self.list_box.pack(side = LEFT, expand = True, fill=BOTH)
+
+        # 2.3. height scroll bar
+        y_scroll_bar = Scrollbar(list_frame, orient = VERTICAL)
+        y_scroll_bar.pack(side = RIGHT, fill = Y)
+        self.list_box.configure(yscrollcommand = y_scroll_bar.set)
+        y_scroll_bar['command'] = self.list_box.yview
     
-        # 2.2. scroll bar
-        scroll_bar = Scrollbar(list_frame)
-        scroll_bar.pack(side=RIGHT, fill=Y)
-        self.list_box.configure(yscrollcommand = scroll_bar.set)
-        scroll_bar['command'] = self.list_box.yview
-    
+        # 2.4. width scroll bar
+        x_scroll_bar = Scrollbar(self.root, orient = HORIZONTAL)
+        x_scroll_bar.pack(side = TOP, fill = X)
+        self.list_box.configure(xscrollcommand = x_scroll_bar.set)
+        x_scroll_bar['command'] = self.list_box.xview
+
         # 3. count label and select label
         label_frame = Frame(self.root)
         label_frame.pack(side = TOP, pady = 5)
@@ -113,21 +121,37 @@ class killer_ui(object):
             self.is_select = False
             self.cpu_usage_lock.release()
         self.list_box.bind('<ButtonRelease-3>', clear_selections)
+        self.list_box.bind('<Double-1>', clear_selections)
         
         # 4. button
         button_frame = Frame(self.root)
         button_frame.pack(side = TOP, pady = 5)
     
-        exit_button = Button(button_frame, text = 'exit', command = killer_ui.stop_killer)
+        exit_button = Button(button_frame, text = 'exit', command = self.hide)
         exit_button.pack(side = LEFT, padx = 20)
     
-        kill_all_proc = lambda: self._kill_proc([index for index in range(len(self.cpu_usage))])
-        kill_all_button = Button(button_frame, text = 'killall', command = kill_all_proc)
+        kill_all_button = Button(button_frame, text = 'killall',
+                command = lambda: self.kill_proc(range(len(self.cpu_usage))))
         kill_all_button.pack(side = LEFT, padx = 20)
     
-        kill_proc = lambda: self._kill_proc(self.list_box.curselection())
-        kill_button = Button(button_frame, text = 'kill', command = kill_proc)
+        kill_button = Button(button_frame, text = 'kill',
+                command = lambda: self.kill_proc(self.list_box.curselection()))
         kill_button.pack(side = RIGHT, padx = 20)
+
+        # 5. bind key
+        self.root.bind('<Control-KeyPress-x>',
+                       lambda event: self.kill_proc(self.list_box.curselection()))
+        self.root.bind('<Control-KeyPress-X>',
+                       lambda event: self.kill_proc(range(len(self.cpu_usage))))
+        self.root.bind('<Control-KeyPress-h>',
+                       lambda event: self.hide())
+
+    def hide(self):
+        self.root.withdraw()
+
+    def show(self):
+        self.root.update()
+        self.root.deiconify()
 
     def gen_show_info(self, cpu_usage = None):
         if cpu_usage == None:
@@ -142,14 +166,11 @@ class killer_ui(object):
 
         return show_info
 
-    def _kill_proc(self, selections, sig = 9):
+    def kill_proc(self, selections, sig = 9):
         if len(selections) == 0:
             return
 
         self.cpu_usage_lock.acquire()
-        if not self.is_select:
-            self.cpu_usage_lock.release()
-            return
 
         fail_index = []
         for index in selections:
@@ -167,7 +188,7 @@ class killer_ui(object):
             if index not in fail_index:
                 self.cpu_usage.remove(cpu_usage_cp[index])
 
-        self.list_var.set(self.gen_show_info())
+        self.list_var.set(self.gen_show_info(self.cpu_usage))
         self.count_var.set('count: %s' % len(self.cpu_usage))
 
         self.is_select = False
@@ -196,6 +217,7 @@ class killer_ui(object):
         self.root.after(500, self.feed)
 
     def run(self):
+        self.hide()
         self.root.mainloop()
 
     def async_feed(self, cpu_usage):
@@ -206,6 +228,8 @@ class killer_ui(object):
 
         self.cpu_usage_buffer = cpu_usage
         self.cpu_usage_lock.release()
+
+        self.show()
 
 def get_running_pid():
     ''''''
@@ -373,7 +397,7 @@ def monitor_cpu(limit = 80):
         cpu_usage = get_cpu_usage(pids)
 
         cpu_usage = [(int(pid), '%.2f' % usage, get_cmd_with_pid(pid))\
-                     for pid, usage in cpu_usage]# if usage > limit]
+                     for pid, usage in cpu_usage if usage > limit]
         if cpu_usage != []:
             alert(cpu_usage)
             has_alert = True
