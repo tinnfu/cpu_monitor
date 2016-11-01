@@ -51,6 +51,7 @@ class killer_ui(object):
         self.cpu_usage_lock = threading.Lock()
         self.cpu_usage = []
         self.cpu_usage_buffer = []
+        self.__killed_pid = []
 
         self.root = Tk()
         self.root.resizable(False, False)
@@ -229,7 +230,11 @@ class killer_ui(object):
         cpu_usage_cp = self.cpu_usage[:]
         for index in selections:
             if index not in fail_index:
+                self.__killed_pid.append(cpu_usage_cp[index][0])
                 self.cpu_usage.remove(cpu_usage_cp[index])
+                for proc in self.cpu_usage_buffer:
+                    if proc[0] == cpu_usage_cp[index][0]:
+                        self.cpu_usage_buffer.remove(proc)
 
         self.list_var.set(self.gen_show_info(self.cpu_usage))
         self.count_var.set('count: %s' % len(self.cpu_usage))
@@ -269,7 +274,16 @@ class killer_ui(object):
                 return
             time.sleep(0.1)
 
-        self.cpu_usage_buffer = cpu_usage
+        # clear
+        self.cpu_usage_buffer = []
+
+        for proc in cpu_usage:
+            if proc[0] not in self.__killed_pid:
+                self.cpu_usage_buffer.append(proc)
+
+        # clear
+        self.__killed_pid = []
+
         self.cpu_usage_lock.release()
 
         self.show()
