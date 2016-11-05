@@ -15,6 +15,9 @@ PID_LEN = 8
 CPU_LEN = 8
 CMD_LEN = 24
 
+# clear showInfo in listBox when TIMEOUT after last update showInfo
+TIMEOUT = 3 # s
+
 g_stop = False
 
 def prefix_pad(limit, msg):
@@ -52,6 +55,7 @@ class killer_ui(object):
         self.cpu_usage = []
         self.cpu_usage_buffer = []
         self.__killed_pid = []
+        self.last_feed_time = 0
 
         self.root = Tk()
         self.root.resizable(False, False)
@@ -260,6 +264,12 @@ class killer_ui(object):
             self.list_var.set(show_info)
             self.count_var.set('count: %s' % len(self.cpu_usage))
             self.cpu_usage_buffer = []
+            self.last_feed_time = time.time()
+        elif self.last_feed_time > 0 and (time.time() - self.last_feed_time > TIMEOUT):
+            self.last_feed_time = 0
+            self.cpu_usage = []
+            self.list_var.set('')
+            self.count_var.set('count: 0')
 
         self.cpu_usage_lock.release()
         self.root.after(500, self.feed)
