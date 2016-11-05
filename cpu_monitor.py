@@ -265,11 +265,20 @@ class killer_ui(object):
             self.count_var.set('count: %s' % len(self.cpu_usage))
             self.cpu_usage_buffer = []
             self.last_feed_time = time.time()
+
+            # show window
+            if not self.root.winfo_ismapped():
+                self.show()
+
         elif self.last_feed_time > 0 and (time.time() - self.last_feed_time > TIMEOUT):
             self.last_feed_time = 0
             self.cpu_usage = []
             self.list_var.set('')
             self.count_var.set('count: 0')
+
+            # hide window
+            if self.root.winfo_ismapped():
+                self.hide()
 
         self.cpu_usage_lock.release()
         self.root.after(500, self.feed)
@@ -295,8 +304,6 @@ class killer_ui(object):
         self.__killed_pid = []
 
         self.cpu_usage_lock.release()
-
-        self.show()
 
 def get_running_pid():
     ''''''
@@ -476,7 +483,7 @@ def monitor_cpu(limit = 80):
 def main():
     pid = os.fork()
     if pid == 0:
-        monitor_cpu(limit = 60)
+        monitor_cpu(limit = 80)
     else:
         sys.exit(0)
 
